@@ -1,0 +1,157 @@
+---
+title: "Practical Machine Learning Project"
+author: "Azmi"
+date: "April 25, 2016"
+output: html_document
+---
+
+##Executive Summary
+This project has been done towards the completion of the "Practical Machine Learning" course on Coursera. The objective of this project is to create a model that can predict the manner (variable *classe*) in which subjects did their exercise. 2 algortihms were tested to build the model with Random Forests ultimately chosen. The final model was used to predict a test dataset which is then submitted for evaluation.
+
+##Background
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: (http://groupware.les.inf.puc-rio.br/har) (see the section on the Weight Lifting Exercise Dataset).
+
+## Loading Libraries
+The following libraries are needed in this project.
+```{r}
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(rattle)
+```
+
+##Downloading Data
+The following code downloads the data file if not previously downloaded.
+```{r}
+lpath <- getwd()
+train.url <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+test.url <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+train.file <- "pml-training.csv"
+test.file <- "pml-testing.csv"
+
+if(!file.exists(train.file)){
+    print("Downloading Training Data ...")
+    download.file(train.url, file.path(lpath, train.file), method="libcurl")
+} else {
+    print("Training Data already downloaded! Continuing...")
+}
+
+if(!file.exists(test.file)){
+    print("Downloading Training Data ...")
+    download.file(test.url, file.path(lpath, test.file), method="libcurl")
+} else {
+    print("Testing Data already downloaded! Continuing...")
+}
+```
+
+##Read raw data
+A quick review of the csv files in Excel reveals a number of 'NA' and '#DIV/0' values in the cells. The raw data is read as a csv with these values set as the NA value.
+```{r}
+training <- read.csv(train.file, na.strings=c("NA","#DIV/0!",""))
+testing <- read.csv(test.file, na.strings=c("NA","#DIV/0!",""))
+dim(training); dim(testing)
+```
+
+##Data Preparation
+Before modelling and predicting, the data needs to be cleaned up. To ensure that the final results are consistent and correct, edits or transformations determined from the training set will be applied to both training and test datasets.
+
+**Removal of predictors with near zero variance**
+
+The nearzerovar function is used to identify which features can be removed in the training set. These predictors are then removed from both datasets.
+```{r}
+col.nzv <- nearZeroVar(training, saveMetrics = TRUE)
+# Remove nzv columns in both datasets
+training.v2 <- training[,col.nzv$nzv==FALSE]
+testing.v2 <- testing[,col.nzv$nzv==FALSE]
+dim(training.v2); dim(testing.v2)
+```
+
+**Removal of unusable columns**
+
+The first column consist of a numerical ID which if included as a predictor will confuse the algorithms. The columns "user_name", "raw_timestamp_part_1", "raw_timestamp_part_2", "cvtd_timestamp" are just informational and cannot be used as part of the modelling.
+```{r}
+training.v2 <- training.v2[,-c(1:5)]
+testing.v2 <- testing.v2[,-c(1:5)]
+```
+
+**Removal of columns with majority NAs**
+
+Some columns seem to contain a lot of NAs, which will not contribute in the modelling. To check this, a simple function is applied to calculate the prevalence of NAs in the columns. From this, a threshold of 0.95 is used to filter out these columns. 
+```{r}
+table(sapply(training.v2, function(x) round(mean(is.na(x)),3)))
+
+col.nas <- sapply(training.v2, function(x) mean(is.na(x))) > 0.95
+training.fin <- training.v2[, col.nas==F]
+testing.fin <- testing.v2[, col.nas==F]
+```
+
+**Final Training and Test Data**
+
+After the data preparation, a simple check is done to ensure that the column names for both datasets are the same and in the same column position. As expected, the only difference is for the last column where the training dataset has the predicted class.
+```{r}
+# comparing column names, both datasets are the same except for lat col
+names(training.fin) != names(testing.fin)
+dim(training.fin); dim(testing.fin)
+```
+The final datasets have `r ncol(training.fin)` columns.
+
+Before applying the ML algorithms, the training dataset is divided into training and testing subsets. The *sub.train* dataset will be used to train the models, while the *sub.test* will be used to test the models. The *testing* will be kept and used only once for submission of this exercise.
+```{r}
+# Partitioning the training data to get 'sub' training and testing datasets
+inTrain <- createDataPartition(y=training.fin$classe, p=0.7, list=FALSE)
+sub.train <- training.fin[inTrain,]
+sub.test <- training.fin[-inTrain,]
+dim(sub.train); dim(sub.test)
+
+```
+
+#Modeling and Prediction: Decision Tree
+The firt algorithm attempted to model the data is Decision Tree. A model is built using the training dataset and using all the default parameters. The model and tree is shown in the code chunk below.
+```{r,fig.height=6,fig.width=6}
+set.seed(2016)
+model.dt <- train(classe~., method="rpart", data=sub.train)
+model.dt$finalModel
+fancyRpartPlot(model.dt$finalModel) # plot the tree
+
+confusionMatrix(predict(model.dt,newdata=sub.train), sub.train$classe)$overall
+confusionMatrix(predict(model.dt,newdata=sub.test), sub.test$classe)$overall
+```
+The accuracy of the model is calculated using the confusion matrix using both the training dataset(in-sample) and test dataset(out-of-sample). From the result shown above, even when using the training data, the accuracy is very low at around **50%**. It can be seen from the tree, that the model was not even able to predict one of the class. Some tuning was done (not shown here) by including some pre-processing (centering and scaling) and cross-validation without much improvement. Therefore the Decision tree is abandoned as a method for this project.
+
+#Modeling and Prediction: Random Forest
+The next method attempted is Random Forests. As the algorithm is slow, a very small subset from the training dataset, is used as a quick check for the accuracy (results not shown here). As the result was promising, a proper modelling was done using the full training dataset. The model was generated with a 4-fold cross validation. The accuracy for both training and test datasets were also calculated.
+```{r, cache=TRUE, message=FALSE}
+set.seed(2016)
+model.rf <- train(classe~., data=sub.train,
+                  method="rf",
+                  trControl=trainControl(method = "cv", number = 4))
+
+confusionMatrix(predict(model.rf,newdata=sub.train), sub.train$classe)$overall
+
+predict.rf <- predict(model.rf, newdata=sub.test)
+confusionMatrix(predict.rf, sub.test$classe)
+
+```
+The in-sample accuracy shows 100% successful prediction which is perfect. More importantly, the predicted out-of-sample accuracy is `r round(confusionMatrix(predict.rf, sub.test$classe)$overall[1]*100,2)`% which is excellent! 
+
+This is the final model which will be used to generate the final predictions for submission.
+
+# Prediction of Test Data for submission
+To submit the results for the project, the predictions are made using the original test data and saved as individual files.
+
+```{r, message=FALSE}
+predict.final <- as.character(predict(model.rf, newdata=testing))
+
+# create function to write predictions to files
+write_files <- function(x) {
+    n <- length(x)
+    for(i in 1:n) {
+        filename <- paste0("problem_id_", testing$problem_id[i], ".txt")
+        write.table(x[i], file=filename, quote=F, row.names=F, col.names=F)
+    }
+}
+write_files(predict.final)
+```
+
+##Conclusion
+A prediction model was successfully built using Random Forest. Using the provided data, this model has a very low predicted out-of-sample error and was used to create the predictions that have been submitted for validation.
